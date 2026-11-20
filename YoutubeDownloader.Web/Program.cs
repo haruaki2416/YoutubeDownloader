@@ -92,10 +92,11 @@ app.MapGet("/api/downloads/{id}/file", (string id, HttpContext context, Download
 
     var stream = new FileStream(job.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read,
         1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-    context.Response.OnCompleted(async () =>
+    context.Response.OnCompleted(() =>
     {
         stream.Dispose();
         queue.DeleteFile(job);
+        return Task.CompletedTask;
     });
     return Results.File(stream, job.Format == "mp3" ? "audio/mpeg" : "video/mp4",
         fileDownloadName: job.FileName, enableRangeProcessing: true);
