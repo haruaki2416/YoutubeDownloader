@@ -1,28 +1,31 @@
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.WebUtilities;
 using YoutubeDownloader.Core.Downloading;
 using YoutubeDownloader.Core.Resolving;
 using YoutubeExplode.Videos;
-using YoutubeExplode.Videos.Streams;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddProblemDetails();
 builder.Services.AddRateLimiter(options =>
 {
-    options.AddFixedWindowLimiter("downloads", limiter =>
+    options.AddFixedWindowLimiter("queue", limiter =>
     {
-        limiter.PermitLimit = 3;
+        limiter.PermitLimit = 10;
         limiter.Window = TimeSpan.FromMinutes(1);
         limiter.QueueLimit = 0;
     });
 });
+builder.Services.AddSingleton<DownloadQueue>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DownloadQueue>());
+
 var app = builder.Build();
 app.UseExceptionHandler();
 app.UseRateLimiter();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-app.MapGet("/api/health", () => Results.Ok(new { ok = true, service = "YoutubeDownloader.Web" }));
+app.MapGet("/api/health", () => Results.Ok(new { ok = true, service = "Sigma Brewer", engine = "YoutubeDownloader.Core", mode = "queued-stream-to-disk" }));
 
 app.MapPost("/api/resolve", async (ResolveRequest request, CancellationToken ct) =>
 {
@@ -40,7 +43,8 @@ app.MapPost("/api/resolve", async (ResolveRequest request, CancellationToken ct)
             id = video.Id.Value,
             title = video.Title,
             author = video.Author.ChannelTitle,
-            duration = video.Duration?.ToString(@"h\:mm\:ss") ?? "Unknown"
+            durationSeconds = video.Duration?.TotalSeconds,
+            duration = video.Duration?.ToString(@"h\\:mm\\:ss") ?? "Unknown"
         });
     }
     catch (Exception ex) when (ex is not OperationCanceledException)
@@ -49,57 +53,54 @@ app.MapPost("/api/resolve", async (ResolveRequest request, CancellationToken ct)
     }
 });
 
-app.MapPost("/api/download", async (DownloadRequest request, HttpContext context, CancellationToken ct) =>
+app.MapPost("/api/downloads", (DownloadRequest request, DownloadQueue queue) =>
 {
     if (!request.Authorized)
-        return Results.BadRequest(new { error = "Please confirm you have permission to download this content." });
-    if (!TryGetVideoId(request.Url, out var videoId))
+        return Results.BadRequest(new { error = "Confirm that you own this content or have permission to download it." });
+    if (!TryGetVideoId(request.Url, out _))
         return Results.BadRequest(new { error = "Enter a valid YouTube video URL." });
+    if (!string.Equals(request.Format, "mp3", StringComparison.OrdinalIgnoreCase)
+        && !string.Equals(request.Format, "mp4", StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { error = "Choose MP4 or MP3." });
 
-    var audioOnly = string.Equals(request.Format, "mp3", StringComparison.OrdinalIgnoreCase);
-    var container = audioOnly ? Container.Mp3 : Container.Mp4;
-    var quality = request.Quality?.ToLowerInvariant() switch
+    if (!queue.TryEnqueue(request, out var job))
+        return Results.Json(new { error = "The download queue is full. Try again shortly." }, statusCode: 429);
+
+    return Results.Accepted($"/api/downloads/{job.Id}", new { id = job.Id, status = job.Status });
+}).RequireRateLimiting("queue");
+
+app.MapGet("/api/downloads/{id}", (string id, DownloadQueue queue) =>
+{
+    var job = queue.Find(id);
+    return job is null ? Results.NotFound() : Results.Ok(new
     {
-        "360p" => VideoQualityPreference.UpTo360p,
-        "480p" => VideoQualityPreference.UpTo480p,
-        "720p" => VideoQualityPreference.UpTo720p,
-        "1080p" => VideoQualityPreference.UpTo1080p,
-        _ => VideoQualityPreference.Highest
-    };
+        id = job.Id,
+        status = job.Status,
+        progress = job.Progress,
+        title = job.Title,
+        fileName = job.FileName,
+        error = job.Error,
+        downloadUrl = job.Status == "completed" ? $"/api/downloads/{job.Id}/file" : null
+    });
+});
 
-    var tempPath = Path.Combine(Path.GetTempPath(), $"yd-{Guid.NewGuid():N}.{(audioOnly ? "mp3" : "mp4")}");
-    try
+app.MapGet("/api/downloads/{id}/file", async (string id, HttpContext context, DownloadQueue queue) =>
+{
+    var job = queue.Find(id);
+    if (job is null) return Results.NotFound();
+    if (job.Status != "completed" || job.FilePath is null || !File.Exists(job.FilePath))
+        return Results.Conflict(new { error = "This download is not ready yet." });
+
+    var stream = new FileStream(job.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+        1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+    context.Response.OnCompleted(async () =>
     {
-        using var resolver = new QueryResolver();
-        var resolved = await resolver.ResolveAsync(videoId.Value, ct);
-        var video = resolved.Videos.FirstOrDefault();
-        if (video is null) return Results.NotFound(new { error = "Video not found." });
-
-        using var downloader = new VideoDownloader();
-        var option = await downloader.GetBestDownloadOptionAsync(
-            video.Id,
-            new VideoDownloadPreference(container, audioOnly ? VideoQualityPreference.Highest : quality),
-            cancellationToken: ct);
-        await downloader.DownloadVideoAsync(tempPath, video, option, includeSubtitles: !audioOnly, cancellationToken: ct);
-
-        var stream = new FileStream(tempPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 64,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-        context.Response.OnCompleted(async () =>
-        {
-            await stream.DisposeAsync();
-            try { File.Delete(tempPath); } catch { }
-        });
-        return Results.File(stream, audioOnly ? "audio/mpeg" : "video/mp4",
-            fileDownloadName: MakeFileName(video.Title, audioOnly ? "mp3" : "mp4"),
-            enableRangeProcessing: true);
-    }
-    catch (Exception ex) when (ex is not OperationCanceledException)
-    {
-        try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
-        return Results.Problem(title: "Download failed", detail: SafeMessage(ex));
-    }
-})
-.RequireRateLimiting("downloads");
+        await stream.DisposeAsync();
+        queue.DeleteFile(job);
+    });
+    return Results.File(stream, job.Format == "mp3" ? "audio/mpeg" : "video/mp4",
+        fileDownloadName: job.FileName, enableRangeProcessing: true);
+});
 
 app.Run();
 
@@ -114,7 +115,7 @@ static bool TryGetVideoId(string? input, out VideoId videoId)
     var candidate = host == "youtu.be"
         ? uri.AbsolutePath.Trim('/')
         : uri.AbsolutePath == "/watch"
-            ? System.Web.HttpUtility.ParseQueryString(uri.Query)["v"]
+            ? QueryHelpers.ParseQuery(uri.Query).TryGetValue("v", out var value) ? value.ToString() : ""
             : uri.AbsolutePath.StartsWith("/shorts/", StringComparison.Ordinal)
                 ? uri.AbsolutePath["/shorts/".Length..].Split('/')[0]
                 : uri.AbsolutePath.StartsWith("/live/", StringComparison.Ordinal)
@@ -123,13 +124,6 @@ static bool TryGetVideoId(string? input, out VideoId videoId)
     if (VideoId.TryParse(candidate) is not { } parsed) return false;
     videoId = parsed;
     return true;
-}
-
-static string MakeFileName(string title, string extension)
-{
-    var safe = Regex.Replace(title, @"[\\/:*?""<>|\p{C}]", "_").Trim().Trim('.');
-    if (safe.Length > 100) safe = safe[..100];
-    return $"{(string.IsNullOrWhiteSpace(safe) ? "video" : safe)}.{extension}";
 }
 
 static string SafeMessage(Exception ex)
