@@ -81,7 +81,7 @@ public sealed class DownloadQueue : BackgroundService
 
                 Directory.CreateDirectory(_dataDirectory);
                 var extension = audioOnly ? "mp3" : "mp4";
-                var safeTitle = Regex.Replace(video.Title, @"[\\/:*?""<>|\\p{C}]", "_").Trim().Trim('.');
+                var safeTitle = Regex.Replace(video.Title, @"[\\/:*?""<>|\p{C}]", "_").Trim().Trim('.');
                 if (safeTitle.Length > 100) safeTitle = safeTitle[..100];
                 job.FileName = $"{(string.IsNullOrWhiteSpace(safeTitle) ? "video" : safeTitle)}.{extension}";
                 job.FilePath = Path.Combine(_dataDirectory, $"{job.Id}.{extension}");
