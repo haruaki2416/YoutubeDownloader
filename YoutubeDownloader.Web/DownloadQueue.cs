@@ -88,7 +88,7 @@ public sealed class DownloadQueue : BackgroundService
                 job.Status = "downloading";
                 var progress = new Progress<Percentage>(p => job.Progress = Math.Clamp(p.Fraction, 0, 1));
                 await downloader.DownloadVideoAsync(job.FilePath, video, option,
-                    includeSubtitles: !audioOnly, ffmpegPath: "ffmpeg", progress: progress,
+                    includeSubtitles: false, ffmpegPath: "ffmpeg", progress: progress,
                     cancellationToken: stoppingToken);
                 job.Progress = 1;
                 job.Status = "completed";
