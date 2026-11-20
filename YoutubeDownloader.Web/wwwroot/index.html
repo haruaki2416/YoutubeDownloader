@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b0d12">
+<title>YouTube Downloader</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0b0d12;color:#f4f5f7}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% -15%,#24304b 0,transparent 55%),#0b0d12;display:grid;place-items:center;padding:24px}
+main{width:min(100%,620px)}.brand{display:flex;align-items:center;gap:12px;margin-bottom:30px}.mark{width:42px;height:42px;border-radius:14px;background:#f04444;display:grid;place-items:center;font-size:19px;font-weight:900}.brand strong{font-size:17px;letter-spacing:-.3px}.brand small{display:block;color:#858b99;margin-top:2px}
+.panel{background:#12151d;border:1px solid #252a36;border-radius:22px;padding:clamp(20px,5vw,34px);box-shadow:0 24px 80px #0006}h1{font-size:clamp(27px,6vw,36px);letter-spacing:-1.2px;margin:0 0 9px}.sub{color:#9ba2b1;line-height:1.55;margin:0 0 26px}
+label{display:block;color:#c9ced8;font-size:13px;font-weight:650;margin:18px 0 8px}input,select{width:100%;height:50px;border:1px solid #303747;border-radius:12px;background:#0d1017;color:#f4f5f7;padding:0 14px;font:inherit;outline:none}input:focus,select:focus{border-color:#e74b4b}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.video{display:none;margin-top:18px;padding:15px;border:1px solid #293142;border-radius:13px;background:#0e121a}.video strong{display:block;line-height:1.4}.video span{display:block;color:#9ba2b1;font-size:13px;margin-top:5px}
+.confirm{display:flex;gap:10px;align-items:flex-start;color:#aeb5c3;font-size:12px;line-height:1.5;margin:18px 0}.confirm input{width:17px;height:17px;flex:none;margin:1px 0;accent-color:#e74b4b}
+button{height:52px;width:100%;border:0;border-radius:13px;background:#ed4545;color:white;font-size:15px;font-weight:750;cursor:pointer;margin-top:5px}button:disabled{opacity:.55;cursor:wait}.status{display:none;margin-top:16px;padding:13px 14px;border-radius:12px;background:#1a202b;color:#cbd2df;font-size:13px;line-height:1.5}.status.error{background:#321b20;color:#ffb6b6}.foot{text-align:center;color:#737b8a;font-size:11px;line-height:1.6;margin:18px 12px 0}
+@media(max-width:460px){body{padding:16px}.grid{grid-template-columns:1fr}.panel{border-radius:18px}}
+</style>
+</head>
+<body>
+<main>
+<div class="brand"><div class="mark">▶</div><div><strong>YouTube Downloader</strong><small>Simple web edition</small></div></div>
+<section class="panel">
+<h1>Save a video.</h1>
+<p class="sub">Paste a YouTube video link, choose a format, and prepare your file.</p>
+<form id="form">
+<label for="url">YouTube video URL</label>
+<input id="url" type="url" placeholder="https://www.youtube.com/watch?v=..." required autocomplete="url">
+<div class="grid">
+<div><label for="format">Format</label><select id="format"><option value="mp4">MP4 video</option><option value="mp3">MP3 audio</option></select></div>
+<div><label for="quality">Video quality</label><select id="quality"><option value="highest">Best available</option><option value="1080p">Up to 1080p</option><option value="720p">Up to 720p</option><option value="480p">Up to 480p</option><option value="360p">Up to 360p</option></select></div>
+</div>
+<div class="video" id="video"><strong id="title"></strong><span id="meta"></span></div>
+<label class="confirm"><input id="authorized" type="checkbox"><span>I own this content or have permission from the rights holder to download it.</span></label>
+<button id="submit" type="submit">Prepare download</button>
+</form>
+<div class="status" id="status" role="status"></div>
+</section>
+<p class="foot">Use only for content you own or are authorized to download. YouTube may restrict automated access; this service does not bypass sign-in or verification checks.</p>
+</main>
+<script>
+const form=document.querySelector("#form"),url=document.querySelector("#url"),format=document.querySelector("#format"),quality=document.querySelector("#quality"),authorized=document.querySelector("#authorized"),button=document.querySelector("#submit"),statusBox=document.querySelector("#status"),videoBox=document.querySelector("#video");
+let resolvedUrl="";
+function status(message,error=false){statusBox.textContent=message;statusBox.style.display="block";statusBox.classList.toggle("error",error)}
+url.addEventListener("change",async()=>{videoBox.style.display="none";resolvedUrl="";if(!url.value.trim())return;status("Checking video…");try{const r=await fetch("/api/resolve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url.value.trim()})});const data=await r.json();if(!r.ok)throw new Error(data.detail||data.error||"Could not resolve video.");document.querySelector("#title").textContent=data.title;document.querySelector("#meta").textContent=data.author+" · "+data.duration;videoBox.style.display="block";resolvedUrl=url.value.trim();status("Video found. Check the permission box to continue.");}catch(e){status(e.message,true)}});
+format.addEventListener("change",()=>{quality.disabled=format.value==="mp3"});
+form.addEventListener("submit",async e=>{e.preventDefault();if(!authorized.checked){status("Please confirm you have permission to download this content.",true);return}button.disabled=true;button.textContent="Preparing file…";status("Contacting YouTube and preparing your download. Large videos may take a while.");try{const r=await fetch("/api/download",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url.value.trim(),format:format.value,quality:quality.value,authorized:authorized.checked})});if(!r.ok){let d={};try{d=await r.json()}catch{}throw new Error(d.detail||d.error||"Download failed.")}
+const blob=await r.blob(),disposition=r.headers.get("Content-Disposition")||"",match=disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i),filename=match?decodeURIComponent(match[1].replace(/"/g,"")):(format.value==="mp3"?"audio.mp3":"video.mp4");const a=document.createElement("a"),objectUrl=URL.createObjectURL(blob);a.href=objectUrl;a.download=filename;document.body.append(a);a.click();a.remove();URL.revokeObjectURL(objectUrl);status("Your file is ready.");}catch(e){status(e.message,true)}finally{button.disabled=false;button.textContent="Prepare download"}});
+</script>
+</body></html>
