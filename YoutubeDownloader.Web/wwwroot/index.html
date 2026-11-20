@@ -12,7 +12,7 @@ label{display:block;color:#c9ced8;font-size:13px;font-weight:650;margin:18px 0 8
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.video{display:none;margin-top:18px;padding:15px;border:1px solid #293142;border-radius:13px;background:#0e121a}.video strong{display:block;line-height:1.4}.video span{display:block;color:#9ba2b1;font-size:13px;margin-top:5px}
 .confirm{display:flex;gap:10px;align-items:flex-start;color:#aeb5c3;font-size:12px;line-height:1.5;margin:18px 0}.confirm input{width:17px;height:17px;flex:none;margin:1px 0;accent-color:#e74b4b}
 button,.download{display:inline-flex;align-items:center;justify-content:center;min-height:52px;width:100%;border:0;border-radius:13px;background:#ed4545;color:white;font-size:15px;font-weight:750;cursor:pointer;text-decoration:none;margin-top:5px}button:disabled{opacity:.55;cursor:wait}
-.status{display:none;margin-top:16px;padding:14px;border-radius:12px;background:#1a202b;color:#cbd2df;font-size:13px;line-height:1.55}.status.error{background:#321b20;color:#ffb6b6}.progress{height:8px;border-radius:20px;background:#303747;overflow:hidden;margin-top:12px}.bar{height:100%;width:0;background:#ed4545;transition:width .25s}.foot{text-align:center;color:#737b8a;font-size:11px;line-height:1.6;margin:18px 12px 0}.hidden{display:none!important}
+.status{display:none;margin-top:16px;padding:14px;border-radius:12px;background:#1a202b;color:#cbd2df;font-size:13px;line-height:1.55}.status.error{background:#321b20;color:#ffb6b6}.progress{height:8px;border-radius:20px;background:#303747;overflow:hidden;margin-top:12px}.bar{height:100%;width:0;background:#ed4545;transition:width .25s}.foot{text-align:center;color:#737b8a;font-size:11px;line-height:1.6;margin:18px 12px 0}
 @media(max-width:460px){body{padding:14px}.grid{grid-template-columns:1fr}.panel{border-radius:18px}}
 </style></head>
 <body><main>
@@ -26,24 +26,24 @@ button,.download{display:inline-flex;align-items:center;justify-content:center;m
 <label class="confirm"><input id="authorized" type="checkbox"><span>I own this content or have permission from the rights holder to download it.</span></label>
 <button id="submit" type="submit">Start download</button>
 </form>
-<div class="status" id="status" role="status" aria-live="polite"><div id="message"></div><div class="progress" id="progress"><div class="bar" id="bar"></div></div><a id="download" class="download hidden" href="#">Download file</a></div>
+<div class="status" id="status" role="status" aria-live="polite"><div id="message"></div><div class="progress" id="progress"><div class="bar" id="bar"></div></div><a id="download" class="download" style="display:none" href="#">Download file</a></div>
 </section>
 <p class="foot">Use only for content you own or are authorized to download. YouTube may restrict automated access; this service does not bypass sign-in or verification checks. Processing speed depends on source availability and server capacity.</p>
 </main>
 <script>
 const form=document.querySelector("#form"),url=document.querySelector("#url"),format=document.querySelector("#format"),quality=document.querySelector("#quality"),authorized=document.querySelector("#authorized"),button=document.querySelector("#submit"),statusBox=document.querySelector("#status"),message=document.querySelector("#message"),videoBox=document.querySelector("#video"),bar=document.querySelector("#bar"),download=document.querySelector("#download"),progress=document.querySelector("#progress");
 let timer=null;
-function show(messageText,error=false){statusBox.style.display="block";message.textContent=messageText;statusBox.classList.toggle("error",error)}
-function stopPolling(){if(timer){clearTimeout(timer);timer=null}}
+function show(t,error=false){statusBox.style.display="block";message.textContent=t;statusBox.classList.toggle("error",error)}
+function stop(){if(timer){clearTimeout(timer);timer=null}}
 async function resolveVideo(){videoBox.style.display="none";if(!url.value.trim())return;show("Checking video…");try{const r=await fetch("/api/resolve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url.value.trim()})});const d=await r.json();if(!r.ok)throw new Error(d.detail||d.error||"Could not resolve video.");document.querySelector("#title").textContent=d.title;document.querySelector("#meta").textContent=d.author+" · "+d.duration;videoBox.style.display="block";show("Video found. Confirm permission to continue.");}catch(e){show(e.message,true)}}
 url.addEventListener("change",resolveVideo);url.addEventListener("paste",()=>setTimeout(resolveVideo,50));
 format.addEventListener("change",()=>{quality.disabled=format.value==="mp3"});
-async function watchJob(id){try{const r=await fetch("/api/downloads/"+id);const d=await r.json();if(!r.ok)throw new Error("Could not read download status.");const pct=Math.round((d.progress||0)*100);bar.style.width=pct+"%";
-if(d.status==="completed"){show("Ready: "+(d.fileName||"your file"));progress.classList.add("hidden");download.href=d.downloadUrl;download.classList.remove("hidden");button.disabled=false;button.textContent="Start another download";stopPolling();return}
-if(d.status==="failed"||d.status==="cancelled"){show(d.error||("Download "+d.status+"."),true);progress.classList.add("hidden");button.disabled=false;button.textContent="Try again";stopPolling();return}
-show((d.title?d.title+" — ":"")+"Status: "+d.status+" · "+pct+"%");timer=setTimeout(()=>watchJob(id),1800);
-}catch(e){show(e.message,true);button.disabled=false;button.textContent="Try again";stopPolling()}}
-form.addEventListener("submit",async e=>{e.preventDefault();stopPolling();download.classList.add("hidden");progress.classList.remove("hidden");bar.style.width="0%";if(!authorized.checked){show("Please confirm you have permission to download this content.",true);return}
+async function poll(id){try{const r=await fetch("/api/downloads/"+id);const d=await r.json();if(!r.ok)throw new Error("Could not read download status.");bar.style.width=Math.round((d.progress||0)*100)+"%";
+if(d.status==="completed"){show("Ready: "+(d.fileName||"your file"));progress.style.display="none";download.href=d.downloadUrl;download.style.display="inline-flex";button.disabled=false;button.textContent="Start another download";stop();return}
+if(d.status==="failed"||d.status==="cancelled"){show(d.error||("Download "+d.status+"."),true);progress.style.display="none";button.disabled=false;button.textContent="Try again";stop();return}
+show((d.title?d.title+" — ":"")+"Status: "+d.status+" · "+Math.round((d.progress||0)*100)+"%");timer=setTimeout(()=>poll(id),1800);
+}catch(e){show(e.message,true);button.disabled=false;button.textContent="Try again";stop()}}
+form.addEventListener("submit",async e=>{e.preventDefault();stop();download.style.display="none";progress.style.display="block";bar.style.width="0%";if(!authorized.checked){show("Please confirm you have permission to download this content.",true);return}
 button.disabled=true;button.textContent="Queueing…";show("Adding your job to the download queue…");
-try{const r=await fetch("/api/downloads",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url.value.trim(),format:format.value,quality:quality.value,authorized:authorized.checked})});const d=await r.json();if(!r.ok)throw new Error(d.error||d.detail||"Could not queue download.");show("Job queued. You can leave this page open while it processes.");button.textContent="Preparing…";watchJob(d.id)}catch(e){show(e.message,true);button.disabled=false;button.textContent="Start download"}});
+try{const r=await fetch("/api/downloads",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url.value.trim(),format:format.value,quality:quality.value,authorized:authorized.checked})});const d=await r.json();if(!r.ok)throw new Error(d.error||d.detail||"Could not queue download.");button.textContent="Preparing…";show("Job queued. Keep this page open to follow progress.");poll(d.id)}catch(e){show(e.message,true);button.disabled=false;button.textContent="Start download"}});
 </script></body></html>
