@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Gress;
+using Microsoft.AspNetCore.WebUtilities;
+using YoutubeExplode.Videos;
 using YoutubeDownloader.Core.Downloading;
 using YoutubeDownloader.Core.Resolving;
 using YoutubeExplode.Videos.Streams;
@@ -56,7 +58,8 @@ public sealed class DownloadQueue : BackgroundService
             {
                 job.Status = "resolving";
                 using var resolver = new QueryResolver();
-                var resolved = await resolver.ResolveAsync(job.Url!, stoppingToken);
+                if (!TryGetVideoId(job.Url, out var videoId)) throw new InvalidOperationException("Invalid YouTube video URL.");
+                var resolved = await resolver.ResolveAsync(videoId.Value, stoppingToken);
                 var video = resolved.Videos.FirstOrDefault()
                     ?? throw new InvalidOperationException("Video not found or unavailable.");
                 job.Title = video.Title;
@@ -106,5 +109,22 @@ public sealed class DownloadQueue : BackgroundService
                 if (job.FilePath is not null) try { File.Delete(job.FilePath); } catch { }
             }
         }
+    }
+
+    private static bool TryGetVideoId(string? input, out VideoId videoId)
+    {
+        videoId = default;
+        if (string.IsNullOrWhiteSpace(input) || input.Length > 2048
+            || !Uri.TryCreate(input, UriKind.Absolute, out var uri)) return false;
+        var host = uri.Host.ToLowerInvariant();
+        if (host != "youtu.be" && host != "youtube.com" && !host.EndsWith(".youtube.com", StringComparison.Ordinal)) return false;
+        var candidate = host == "youtu.be" ? uri.AbsolutePath.Trim('/')
+            : uri.AbsolutePath == "/watch"
+                ? QueryHelpers.ParseQuery(uri.Query).TryGetValue("v", out var value) ? value.ToString() : ""
+                : uri.AbsolutePath.StartsWith("/shorts/", StringComparison.Ordinal) ? uri.AbsolutePath["/shorts/".Length..].Split('/')[0]
+                : uri.AbsolutePath.StartsWith("/live/", StringComparison.Ordinal) ? uri.AbsolutePath["/live/".Length..].Split('/')[0] : "";
+        if (VideoId.TryParse(candidate) is not { } parsed) return false;
+        videoId = parsed;
+        return true;
     }
 }
