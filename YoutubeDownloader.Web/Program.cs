@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.WebUtilities;
 using YoutubeDownloader.Core.Downloading;
@@ -44,7 +43,7 @@ app.MapPost("/api/resolve", async (ResolveRequest request, CancellationToken ct)
             title = video.Title,
             author = video.Author.ChannelTitle,
             durationSeconds = video.Duration?.TotalSeconds,
-            duration = video.Duration?.ToString(@"h\\:mm\\:ss") ?? "Unknown"
+            duration = video.Duration?.ToString(@"h\:mm\:ss") ?? "Unknown"
         });
     }
     catch (Exception ex) when (ex is not OperationCanceledException)
@@ -84,7 +83,7 @@ app.MapGet("/api/downloads/{id}", (string id, DownloadQueue queue) =>
     });
 });
 
-app.MapGet("/api/downloads/{id}/file", async (string id, HttpContext context, DownloadQueue queue) =>
+app.MapGet("/api/downloads/{id}/file", (string id, HttpContext context, DownloadQueue queue) =>
 {
     var job = queue.Find(id);
     if (job is null) return Results.NotFound();
@@ -95,7 +94,7 @@ app.MapGet("/api/downloads/{id}/file", async (string id, HttpContext context, Do
         1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
     context.Response.OnCompleted(async () =>
     {
-        await stream.DisposeAsync();
+        stream.Dispose();
         queue.DeleteFile(job);
     });
     return Results.File(stream, job.Format == "mp3" ? "audio/mpeg" : "video/mp4",
@@ -136,4 +135,4 @@ static string SafeMessage(Exception ex)
 }
 
 record ResolveRequest(string? Url);
-record DownloadRequest(string? Url, string? Format, string? Quality, bool Authorized);
+public record DownloadRequest(string? Url, string? Format, string? Quality, bool Authorized);
